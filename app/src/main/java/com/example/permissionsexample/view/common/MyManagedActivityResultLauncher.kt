@@ -1,13 +1,8 @@
-package com.example.permissionsexample.view
+package com.example.permissionsexample.view.common
 
 import android.Manifest
 import android.app.Activity
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
-import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -42,17 +37,4 @@ fun MyManagedActivityResultLauncher(
         }
     )
     return launcher
-}
-
-fun getImage(context: Context, uri: Uri?): Bitmap? {
-    return if (Build.VERSION.SDK_INT < 28) {
-        MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
-    } else {
-        val source = uri?.let {
-            ImageDecoder.createSource(context.contentResolver, it)
-        }
-        source?.let {
-            ImageDecoder.decodeBitmap(it)
-        }!!
-    }
-}
+} 

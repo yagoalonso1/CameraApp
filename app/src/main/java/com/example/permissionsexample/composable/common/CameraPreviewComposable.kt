@@ -1,4 +1,4 @@
-package com.example.permissionsexample.view
+package com.example.permissionsexample.composable.common
 
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
@@ -8,7 +8,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 
 @Composable
-fun CameraPreview(
+fun CameraPreviewComposable(
     controller: LifecycleCameraController,
     modifier: Modifier = Modifier
 ) {
@@ -19,6 +19,7 @@ fun CameraPreview(
                 this.controller = controller
                 controller.bindToLifecycle(lifecycleOwner)
             }
-        }, modifier = modifier
+        },
+        modifier = modifier
     )
-}
+} 

@@ -1,65 +1,115 @@
 package com.example.permissionsexample.viewmodel
 
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
 import androidx.camera.view.LifecycleCameraController
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.permissionsexample.model.DBHelper
 import com.example.permissionsexample.model.User
-import com.example.permissionsexample.repository.UserRepository
-import com.google.firebase.firestore.DocumentChange
-import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class MyViewModel : ViewModel() {
-    private val _cameraPermissionGranted = MutableLiveData(false)
-    val cameraPermissionGranted = _cameraPermissionGranted
+    // Estado de los permisos
+    private val _cameraPermissionGranted = MutableLiveData<Boolean>()
+    val cameraPermissionGranted: LiveData<Boolean> = _cameraPermissionGranted
 
-    private val _shouldShowPermissionRationale = MutableLiveData(false)
-    val shouldShowPermissionRationale = _shouldShowPermissionRationale
+    private val _shouldShowPermissionRationale = MutableLiveData<Boolean>()
+    val shouldShowPermissionRationale: LiveData<Boolean> = _shouldShowPermissionRationale
 
-    private val _showPermissionDenied = MutableLiveData(false)
-    val showPermissionDenied = _showPermissionDenied
+    private val _showPermissionDenied = MutableLiveData<Boolean>()
+    val showPermissionDenied: LiveData<Boolean> = _showPermissionDenied
 
+    // Estado de la imagen capturada
+    private val _capturedBitmap = MutableLiveData<Bitmap?>()
+    val capturedBitmap: LiveData<Bitmap?> = _capturedBitmap
+    
+    private val _capturedImageUri = MutableLiveData<Uri?>()
+    val capturedImageUri: LiveData<Uri?> = _capturedImageUri
+    
+    private val _currentBitmapImage = MutableLiveData<Bitmap?>()
+    val currentBitmapImage: LiveData<Bitmap?> = _currentBitmapImage
+    
+    private val _currentImageUri = MutableLiveData<Uri?>()
+    val currentImageUri: LiveData<Uri?> = _currentImageUri
+    
+    // Estado de guardado en galería
+    private val _savedImageUri = MutableLiveData<Uri?>()
+    val savedImageUri: LiveData<Uri?> = _savedImageUri
+    
+    private val _gallerySavedSuccess = MutableLiveData<Boolean>()
+    val gallerySavedSuccess: LiveData<Boolean> = _gallerySavedSuccess
+
+    // Datos de usuario
+    private val _userName = MutableLiveData<String>()
+    val userName: LiveData<String> = _userName
+
+    private val _age = MutableLiveData<String>()
+    val age: LiveData<String> = _age
+
+    private val _userList = MutableLiveData<MutableList<User>>()
+    val userList: LiveData<MutableList<User>> = _userList
+
+    private val _showRow = MutableLiveData<Boolean>()
+    val showRow: LiveData<Boolean> = _showRow
+
+    private val _actualUser = MutableLiveData<User?>()
+    val actualUser: LiveData<User?> = _actualUser
+
+    // Métodos para estado de permisos
     fun setCameraPermissionGranted(granted: Boolean) {
         _cameraPermissionGranted.value = granted
     }
 
-    fun setShouldShowPermissionRationale(should: Boolean) {
-        _shouldShowPermissionRationale.value = should
+    fun setShouldShowPermissionRationale(shouldShow: Boolean) {
+        _shouldShowPermissionRationale.value = shouldShow
     }
 
-    fun setShowPermissionDenied(denied: Boolean) {
-        _showPermissionDenied.value = denied
+    fun setShowPermissionDenied(show: Boolean) {
+        _showPermissionDenied.value = show
+    }
+    
+    // Métodos para la imagen actual
+    fun setCurrentBitmapImage(bitmap: Bitmap?) {
+        _currentBitmapImage.value = bitmap
+    }
+    
+    fun setCurrentImageUri(uri: Uri?) {
+        _currentImageUri.value = uri
     }
 
-    private val repository = UserRepository()
-
-    private val _userName = MutableLiveData("")
-    val userName = _userName
-    private val _age = MutableLiveData("")
-    val age = _age
-    private val _profilePicture = MutableLiveData("")
-    val profilePicture = _profilePicture
-    private val _showRow = MutableLiveData(false)
-    val showRow = _showRow
-    private val _userList = MutableLiveData(emptyList<User>())
-    val userList = _userList
-    private val _actualUser = MutableLiveData<User?>()
-    val actualUser = _actualUser
-
-    fun setShowRow(show: Boolean) {
-        _showRow.value = show
+    // Métodos para captura de imagen
+    fun setCapturedBitmap(bitmap: Bitmap?) {
+        _capturedBitmap.value = bitmap
+    }
+    
+    fun setCapturedImageUri(uri: Uri?) {
+        _capturedImageUri.value = uri
+    }
+    
+    fun setSavedImageUri(uri: Uri?) {
+        _savedImageUri.value = uri
+    }
+    
+    fun setGallerySavedSuccess(success: Boolean) {
+        _gallerySavedSuccess.value = success
     }
 
+    // Métodos para datos de usuario
     fun setUserName(name: String) {
         _userName.value = name
     }
@@ -68,122 +118,148 @@ class MyViewModel : ViewModel() {
         _age.value = age
     }
 
-    fun setProfilePicture(picture: String) {
-        _profilePicture.value = picture
+    fun setShowRow(show: Boolean) {
+        _showRow.value = show
     }
 
-    fun saveUser(userName: String?, userAge: String?, userPicture: Uri?) {
-        if(userPicture != null) {
-            uploadImage(userPicture, userName, userAge)
+    fun setActualUser(user: User?) {
+        _actualUser.value = user
+        _userName.value = user?.userName ?: ""
+        _age.value = user?.age.toString()
+    }
+
+    // Métodos para tomar foto y guardar en galería
+    fun takePhoto(context: Context, controller: LifecycleCameraController, onPhotoTaken: (Bitmap) -> Unit) {
+        controller.takePicture(context.mainExecutor, { capturedImage ->
+            Log.i("TakePhotoScreen", "Foto capturada correctamente")
+            _capturedBitmap.value = capturedImage.toBitmap()
+            onPhotoTaken(capturedImage.toBitmap())
+        })
+    }
+
+    fun saveImageToGallery(context: Context, bitmap: Bitmap): Uri? {
+        var uri: Uri? = null
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val imageName = "IMG_$timestamp.jpg"
+            
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, imageName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            
+            val resolver = context.contentResolver
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                uri?.let { imageUri ->
+                    val outputStream = resolver.openOutputStream(imageUri)
+                    outputStream?.use { output ->
+                        saveBitmapToOutputStream(bitmap, output)
+                    }
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(imageUri, contentValues, null, null)
+                }
+            } else {
+                val imagesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                val image = File(imagesDir, imageName)
+                val outputStream = FileOutputStream(image)
+                outputStream.use { output ->
+                    saveBitmapToOutputStream(bitmap, output)
+                }
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DATA, image.absolutePath)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                }
+                uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            }
+            
+            // Actualizar estado
+            _savedImageUri.value = uri
+            _gallerySavedSuccess.value = true
+            
+            return uri
+        } catch (e: Exception) {
+            Log.e("MyViewModel", "Error guardando imagen: ${e.message}")
+            _gallerySavedSuccess.value = false
+            return null
+        }
+    }
+    
+    private fun saveBitmapToOutputStream(bitmap: Bitmap, outputStream: OutputStream) {
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+    }
+
+    // Métodos para base de datos
+    fun saveUser(userName: String, age: String, uri: Uri?) {
+        viewModelScope.launch {
+            try {
+                val user = User(null, userName, age.toIntOrNull() ?: 0, uri?.toString())
+                val dbHelper = DBHelper.getInstance()
+                dbHelper.insertUser(user)
+            } catch (e: Exception) {
+                Log.e("MyViewModel", "Error guardando usuario: ${e.message}")
+            }
         }
     }
 
     fun getUsers() {
-        repository.getUsers().addSnapshotListener { value, error ->
-            if (error != null) {
-                Log.e("Firestore error", error.message.toString())
-                return@addSnapshotListener
-            }
-            val tempList = mutableListOf<User>()
-            for (dc: DocumentChange in value?.documentChanges!!) {
-                if (dc.type == DocumentChange.Type.ADDED) {
-                    val newUser = dc.document.toObject(User::class.java)
-                    newUser.userId = dc.document.id
-                    tempList.add(newUser)
-                }
-            }
-            _userList.value = tempList
-        }
-    }
-
-    fun getUser(userId: String) {
-        repository.getUser(userId).addSnapshotListener { value, error ->
-            if (error != null) {
-                Log.w("UserRepository", "Listen failed.", error)
-                return@addSnapshotListener
-            }
-            if (value != null && value.exists()) {
-                val user = value.toObject(User::class.java)
-                if (user != null) {
-                    user.userId = userId
-                }
-                _actualUser.value = user
-                _userName.value = _actualUser.value!!.userName
-                _age.value = _actualUser.value!!.age.toString()
-
-            } else {
-                Log.d("UserRepository", "Current data: null")
+        viewModelScope.launch {
+            try {
+                val dbHelper = DBHelper.getInstance()
+                val users = dbHelper.getUsers()
+                _userList.value = users
+            } catch (e: Exception) {
+                Log.e("MyViewModel", "Error obteniendo usuarios: ${e.message}")
             }
         }
     }
 
-    fun deleteUser(userId: String) {
-        repository.deleteUser(userId)
+    fun getUser(userId: Long) {
+        viewModelScope.launch {
+            try {
+                val dbHelper = DBHelper.getInstance()
+                val user = dbHelper.getUser(userId)
+                setActualUser(user)
+            } catch (e: Exception) {
+                Log.e("MyViewModel", "Error obteniendo usuario: ${e.message}")
+            }
+        }
     }
 
     fun editUser() {
-        val editedUser = User(
-            actualUser.value!!.userId,
-            userName.value!!,
-            age.value!!.toInt(),
-            profilePicture.value
-        )
-        repository.editUser(editedUser)
+        viewModelScope.launch {
+            try {
+                val dbHelper = DBHelper.getInstance()
+                val user = User(
+                    _actualUser.value?.userId,
+                    _userName.value ?: "",
+                    _age.value?.toIntOrNull() ?: 0,
+                    _capturedImageUri.value?.toString() ?: _actualUser.value?.profilePicture
+                )
+                
+                if (user.userId != null) {
+                    dbHelper.updateUser(user)
+                }
+            } catch (e: Exception) {
+                Log.e("MyViewModel", "Error actualizando usuario: ${e.message}")
+            }
+        }
     }
 
-    fun uploadImage(imageUri: Uri, userName: String?, userAge: String?) {
-        val formatter = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault())
-        val now = Date()
-        val fileName = formatter.format(now)
-        val storage = FirebaseStorage.getInstance().getReference("images/$fileName")
-        storage.putFile(imageUri)
-            .addOnSuccessListener {
-                Log.i("IMAGE UPLOAD", "Image uploaded successfully")
-                storage.downloadUrl.addOnSuccessListener {
-                    Log.i("IMAGEN", it.toString())
-                    repository.addUser(User(null, userName!!, userAge!!.toInt(), it.toString()))
-                }
-
+    fun deleteUser(userId: Long) {
+        viewModelScope.launch {
+            try {
+                val dbHelper = DBHelper.getInstance()
+                dbHelper.deleteUser(userId)
+            } catch (e: Exception) {
+                Log.e("MyViewModel", "Error eliminando usuario: ${e.message}")
             }
-            .addOnFailureListener {
-                Log.i("IMAGE UPLOAD", "Image upload failed")
-            }
+        }
     }
-
-    fun takePhoto(
-        context: Context,
-        controller: LifecycleCameraController,
-        onPhotoTaken: (Bitmap) -> Unit
-    ) {
-        controller.takePicture(
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    super.onCaptureSuccess(image)
-
-                    //Para que la foto no salga rotada
-                    /*val matri = Matrix().apply{
-                        postRotate(image.imageInfo.rotationDegrees.toFloat())
-                    }
-                    val rotatedBitmap = Bitmap.createBitmap(
-                        image.toBitmap(),
-                        0,
-                        0,
-                        image.width,
-                        image.height,
-                        matri,
-                        true
-                    )
-                    onPhotoTaken(rotatedBitmap)*/
-                    onPhotoTaken(image.toBitmap())
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    super.onError(exception)
-                    Log.e("Camera", "Error taken photo", exception)
-                }
-            }
-        )
-    }
-
 }
